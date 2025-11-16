@@ -62,80 +62,84 @@ Basado en la Cartilla de Factura Comercial CT-COA-0124 de la DIAN, los requisito
     *   **Cumplimiento Parcial**: Sí (si se indica que hay un descuento pero no se justifica o cuantifica claramente).
 `;
 
-
 const responseSchema = {
-  type: Type.OBJECT,
-  properties: {
-    overallStatus: {
-      type: Type.STRING,
-      enum: ['COMPLIANT', 'NON_COMPLIANT'],
-      description: "El estado general de la factura. 'COMPLIANT' si todos los chequeos son PASS, de lo contrario 'NON_COMPLIANT'."
-    },
-    summary: {
-      type: Type.STRING,
-      description: "Un resumen conciso en español (máximo 25 palabras) sobre el resultado de la validación."
-    },
-    details: {
-      type: Type.ARRAY,
-      description: "Una lista de los resultados de la validación para cada requisito de la DIAN.",
-      items: {
-        type: Type.OBJECT,
-        properties: {
-          id: { type: Type.INTEGER, description: "El número del requisito, del 1 al 14." },
-          requirement: { type: Type.STRING, description: "El nombre del requisito validado." },
-          dianRule: { type: Type.STRING, description: "La referencia a la norma o requisito DIAN aplicable. Ej: 'Referencia DIAN: Requisito 1'." },
-          status: { 
-            type: Type.STRING, 
-            enum: ['PASS', 'FAIL', 'PARTIAL'],
-            description: "PASS (cumple), FAIL (no cumple), o PARTIAL (cumple parcialmente)."
+  type: Type.ARRAY,
+  description: "Un array de resultados de validación, uno por cada factura en el lote de entrada.",
+  items: {
+    type: Type.OBJECT,
+    properties: {
+      invoiceId: {
+        type: Type.STRING,
+        description: "El número de factura, extraído del campo 'numero_factura' del JSON de la factura."
+      },
+      overallStatus: {
+        type: Type.STRING,
+        enum: ['COMPLIANT', 'NON_COMPLIANT'],
+        description: "El estado general de la factura. 'COMPLIANT' si todos los chequeos son PASS, de lo contrario 'NON_COMPLIANT'."
+      },
+      summary: {
+        type: Type.STRING,
+        description: "Un resumen conciso en español (máximo 25 palabras) sobre el resultado de la validación."
+      },
+      details: {
+        type: Type.ARRAY,
+        description: "Una lista de los resultados de la validación para cada requisito de la DIAN.",
+        items: {
+          type: Type.OBJECT,
+          properties: {
+            id: { type: Type.INTEGER, description: "El número del requisito, del 1 al 14." },
+            requirement: { type: Type.STRING, description: "El nombre del requisito validado." },
+            dianRule: { type: Type.STRING, description: "La referencia a la norma o requisito DIAN aplicable. Ej: 'Referencia DIAN: Requisito 1'." },
+            status: { 
+              type: Type.STRING, 
+              enum: ['PASS', 'FAIL', 'PARTIAL'],
+              description: "PASS (cumple), FAIL (no cumple), o PARTIAL (cumple parcialmente)."
+            },
+            reason: { 
+              type: Type.STRING, 
+              description: "Una explicación clara y concisa en español del porqué del estado. Si es PASS, indica brevemente qué dato se validó."
+            },
+            suggestion: {
+              type: Type.STRING,
+              description: "Una acción sugerida y clara en español para corregir el problema si el estado es FAIL o PARTIAL. Si es PASS, debe ser un texto vacío ''."
+            }
           },
-          reason: { 
-            type: Type.STRING, 
-            description: "Una explicación clara y concisa en español del porqué del estado. Si es PASS, indica brevemente qué dato se validó."
-          },
-          suggestion: {
-            type: Type.STRING,
-            description: "Una acción sugerida y clara en español para corregir el problema si el estado es FAIL o PARTIAL. Si es PASS, debe ser un texto vacío ''."
-          }
-        },
-        required: ["id", "requirement", "dianRule", "status", "reason", "suggestion"]
+          required: ["id", "requirement", "dianRule", "status", "reason", "suggestion"]
+        }
       }
-    }
-  },
-  required: ["overallStatus", "summary", "details"]
+    },
+    required: ["invoiceId", "overallStatus", "summary", "details"]
+  }
 };
 
-
-export const validateInvoiceWithAI = async (invoiceJson: object): Promise<ValidationResult> => {
+export const validateInvoicesWithAI = async (invoices: object[]): Promise<ValidationResult[]> => {
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
   const prompt = `
     Eres un experto en la normativa aduanera de la DIAN en Colombia, especializado en la validación de facturas comerciales de importación.
-    Tu tarea es analizar la siguiente factura (en formato JSON) y verificar si cumple con los requisitos legales detallados en la cartilla oficial "Factura comercial en la determinación del valor en aduana de las mercancías importadas" (CT-COA-0124).
+    Tu tarea es analizar el siguiente LOTE de facturas (proporcionado como un array de objetos JSON) y verificar si cada una cumple con los requisitos legales detallados en la cartilla oficial "Factura comercial en la determinación del valor en aduana de las mercancías importadas" (CT-COA-0124).
 
     **Requisitos Legales Detallados (Basados en Cartilla CT-COA-0124):**
     ${DIAN_REQUIREMENTS_FULL}
 
-    **Instrucciones de Análisis Avanzado:**
-    1.  Analiza exhaustivamente el JSON de la factura proporcionado.
-    2.  Compara los datos de la factura contra cada uno de los 14 requisitos listados.
-    3.  **Realiza validaciones cruzadas**:
-        *   **Cálculos Internos**: Si aplica, verifica que el precio total de un ítem coincida con cantidad * precio unitario. Verifica que el total de la factura sea coherente con la suma de los subtotales.
+    **Instrucciones de Análisis de Lote:**
+    1.  Procesa el array de facturas JSON proporcionado. Para CADA factura en el array, realiza las siguientes acciones.
+    2.  **Extrae el Identificador**: Obtén el número de factura del campo 'numero_factura' (o similar). Este será el 'invoiceId'. Si no encuentras un número, usa 'Factura sin ID ' seguido del índice en el array (ej. 'Factura sin ID 0').
+    3.  **Análisis Exhaustivo por Factura**: Compara los datos de la factura contra cada uno de los 14 requisitos listados.
+    4.  **Realiza validaciones cruzadas por Factura**:
+        *   **Cálculos Internos**: Verifica que el precio total de un ítem coincida con cantidad * precio unitario.
         *   **Consistencia de Campos**: Valida la coherencia entre el Incoterm y los gastos de flete/seguro declarados.
-    4.  Determina el estado de cada requisito: 'PASS', 'FAIL', o 'PARTIAL', prestando especial atención a las condiciones de cumplimiento parcial.
-    5.  Para cada requisito, proporciona una **razón** clara, técnica y concisa en español del porqué del estado. Si es PASS, indica brevemente qué dato se validó exitosamente. Si es FAIL o PARTIAL, explica la discrepancia específica.
-    6.  Para estados FAIL o PARTIAL, proporciona una **sugerencia** de corrección clara y accionable. Si el estado es PASS, la sugerencia debe ser un texto vacío ('').
-    7.  Para cada requisito, completa el campo **dianRule** con el texto "Referencia DIAN: Requisito X", donde X es el número del ID del requisito.
-    8.  El **overallStatus** debe ser 'COMPLIANT' solo si TODOS los requisitos tienen estado 'PASS'. En cualquier otro caso (al menos un FAIL o PARTIAL), debe ser 'NON_COMPLIANT'.
-    9.  Genera un **summary** conciso en español (máximo 25 palabras) que refleje el resultado general, indicando si hay incumplimientos críticos o parciales.
-    10. Responde ÚNICAMENTE con un objeto JSON que se ajuste al esquema definido. No incluyas texto, explicaciones o markdown fuera del objeto JSON.
+    5.  Para cada requisito de cada factura, determina el estado ('PASS', 'FAIL', 'PARTIAL'), proporciona una **razón** clara y una **sugerencia** accionable si es necesario. Completa el campo **dianRule** con "Referencia DIAN: Requisito X".
+    6.  El **overallStatus** de una factura debe ser 'COMPLIANT' solo si TODOS sus requisitos tienen estado 'PASS'. En cualquier otro caso, debe ser 'NON_COMPLIANT'.
+    7.  Genera un **summary** conciso para cada factura.
+    8.  **Formato de Salida Final**: Tu respuesta DEBE ser un único array JSON. Cada elemento del array será un objeto que representa el análisis completo de una de las facturas del lote de entrada, ajustándose estrictamente al esquema definido. No incluyas texto, explicaciones o markdown fuera de este array JSON.
 
-    **Factura a Analizar:**
+    **Lote de Facturas a Analizar:**
     \`\`\`json
-    ${JSON.stringify(invoiceJson, null, 2)}
+    ${JSON.stringify(invoices, null, 2)}
     \`\`\`
 
-    Ahora, proporciona tu análisis detallado en el formato JSON especificado.
+    Ahora, proporciona tu análisis detallado en el formato de array JSON especificado.
   `;
 
   try {
@@ -150,20 +154,22 @@ export const validateInvoiceWithAI = async (invoiceJson: object): Promise<Valida
     });
 
     const jsonText = response.text.trim();
-    const result = JSON.parse(jsonText);
+    const results = JSON.parse(jsonText);
     
-    // Ensure all details are present as per the enum
-    result.details.forEach((detail: any) => {
-        if (!Object.values(ValidationStatus).includes(detail.status)) {
-            console.warn(`Invalid status found: ${detail.status}. Defaulting to FAIL.`);
-            detail.status = ValidationStatus.FAIL;
-        }
+    // Data integrity check
+    results.forEach((result: any) => {
+        result.details.forEach((detail: any) => {
+            if (!Object.values(ValidationStatus).includes(detail.status)) {
+                console.warn(`Invalid status found: ${detail.status} for invoice ${result.invoiceId}. Defaulting to FAIL.`);
+                detail.status = ValidationStatus.FAIL;
+            }
+        });
     });
 
-    return result as ValidationResult;
+    return results as ValidationResult[];
 
   } catch (error) {
     console.error("Error calling Gemini API:", error);
-    throw new Error("La IA no pudo procesar la solicitud. Inténtalo de nuevo más tarde.");
+    throw new Error("La IA no pudo procesar la solicitud para el lote de facturas. Inténtalo de nuevo más tarde.");
   }
 };

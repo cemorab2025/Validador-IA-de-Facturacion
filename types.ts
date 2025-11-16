@@ -15,6 +15,7 @@ export interface ValidationDetail {
 }
 
 export interface ValidationResult {
+  invoiceId: string;
   overallStatus: 'COMPLIANT' | 'NON_COMPLIANT';
   summary: string;
   details: ValidationDetail[];
