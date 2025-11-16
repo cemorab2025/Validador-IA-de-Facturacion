@@ -1,0 +1,5 @@
+{
+  "name": "Kila AI Invoice Validator",
+  "description": "An intelligent web application that uses AI to validate commercial import invoices against Colombian DIAN regulations, providing clear and actionable feedback to simplify international logistics.",
+  "requestFramePermissions": []
+}
